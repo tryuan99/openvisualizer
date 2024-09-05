@@ -12,16 +12,17 @@ import threading
 import paho.mqtt.client as mqtt
 
 from openvisualizer.motehandler.moteconnector.openparser import parser
+from openvisualizer.motehandler.moteconnector.openparser.packet import SensorNetworkPacket
 
 log = logging.getLogger('ParserData')
 log.setLevel(logging.ERROR)
 log.addHandler(logging.NullHandler())
 
-
 class ParserData(parser.Parser):
     HEADER_LENGTH = 2
 
     UINJECT_MASK = 'uinject'
+    USENSOR_NETWORK_PORT = 0xcdab
 
     def __init__(self, mqtt_broker_address, mote_port):
 
@@ -98,82 +99,90 @@ class ParserData(parser.Parser):
 
         # when the packet goes to internet it comes with the asn at the beginning as timestamp.
 
-        # cross layer trick here. capture UDP packet from udpLatency and get ASN to compute latency.
-        offset = 0
-        if len(data) > 37:
-            offset -= 7
-            if self.UINJECT_MASK == ''.join(chr(i) for i in data[offset:]):
-
-                pkt_info = \
-                    {
-                        'asn': 0,
-                        'src_id': None,
-                        'counter': 0,
-                        'latency': 0,
-                        'numCellsUsedTx': 0,
-                        'numCellsUsedRx': 0,
-                        'dutyCycle': 0,
-                    }
-
-                offset -= 2
-                pkt_info['counter'] = data[offset - 2] + 256 * data[offset - 1]  # counter sent by mote
-
-                pkt_info['asn'] = struct.unpack('<I', ''.join([chr(c) for c in data[offset - 5:offset - 1]]))[0]
-                aux = data[offset - 5:offset]  # last 5 bytes of the packet are the ASN in the UDP latency packet
-                diff = ParserData._asn_diference(aux, asn_bytes)  # calculate difference
-                pkt_info['latency'] = diff  # compute time in slots
-                offset -= 5
-
-                pkt_info['numCellsUsedTx'] = data[offset - 1]
-                offset -= 1
-
-                pkt_info['numCellsUsedRx'] = data[offset - 1]
-                offset -= 1
-
-                pkt_info['src_id'] = ''.join(['%02x' % x for x in [data[offset - 1], data[offset - 2]]])  # mote id
-                src_id = pkt_info['src_id']
-                offset -= 2
-
-                num_ticks_on = struct.unpack('<I', ''.join([chr(c) for c in data[offset - 4:offset]]))[0]
-                offset -= 4
-
-                num_ticks_in_total = struct.unpack('<I', ''.join([chr(c) for c in data[offset - 4:offset]]))[0]
-                offset -= 4
-
-                pkt_info['dutyCycle'] = float(num_ticks_on) / float(num_ticks_in_total)  # duty cycle
-
-                # self.avg_kpi:
-                if src_id in self.avg_kpi:
-                    self.avg_kpi[src_id]['counter'].append(pkt_info['counter'])
-                    self.avg_kpi[src_id]['latency'].append(pkt_info['latency'])
-                    self.avg_kpi[src_id]['numCellsUsedTx'].append(pkt_info['numCellsUsedTx'])
-                    self.avg_kpi[src_id]['numCellsUsedRx'].append(pkt_info['numCellsUsedRx'])
-                    self.avg_kpi[src_id]['dutyCycle'].append(pkt_info['dutyCycle'])
-                else:
-                    self.avg_kpi[src_id] = {
-                        'counter': [pkt_info['counter']],
-                        'latency': [pkt_info['latency']],
-                        'numCellsUsedTx': [pkt_info['numCellsUsedTx']],
-                        'numCellsUsedRx': [pkt_info['numCellsUsedRx']],
-                        'dutyCycle': [pkt_info['dutyCycle']],
-                        'avg_cellsUsage': 0.0,
-                        'avg_latency': 0.0,
-                        'avg_pdr': 0.0,
-                    }
-
-                if self.mqtt_connected:
-                    self.publish_kpi(src_id)
-
-                # in case we want to send the computed time to internet..
-                # computed=struct.pack('<H', timeinus)#to be appended to the pkt
-                # for x in computed:
-                # data.append(x)
-            else:
-                # no udplatency
-                # print data
-                pass
+        packet = SensorNetworkPacket(bytearray(data[24:]))
+        if (len(data) >= SensorNetworkPacket.size() and
+            packet.get("udp_header").get("source_port") == self.USENSOR_NETWORK_PORT and
+            packet.get("udp_header").get("destination_port") == self.USENSOR_NETWORK_PORT):
+            address = packet.get("udp_payload").get("source_address")
+            counter = packet.get("udp_payload").get("counter")
+            log.info("received sensor network packet from {0}: counter {1}".format(hex(address), counter))
         else:
-            pass
+            # cross layer trick here. capture UDP packet from udpLatency and get ASN to compute latency.
+            offset = 0
+            if len(data) > 37:
+                offset -= 7
+                if self.UINJECT_MASK == ''.join(chr(i) for i in data[offset:]):
+
+                    pkt_info = \
+                        {
+                            'asn': 0,
+                            'src_id': None,
+                            'counter': 0,
+                            'latency': 0,
+                            'numCellsUsedTx': 0,
+                            'numCellsUsedRx': 0,
+                            'dutyCycle': 0,
+                        }
+
+                    offset -= 2
+                    pkt_info['counter'] = data[offset - 2] + 256 * data[offset - 1]  # counter sent by mote
+
+                    pkt_info['asn'] = struct.unpack('<I', ''.join([chr(c) for c in data[offset - 5:offset - 1]]))[0]
+                    aux = data[offset - 5:offset]  # last 5 bytes of the packet are the ASN in the UDP latency packet
+                    diff = ParserData._asn_diference(aux, asn_bytes)  # calculate difference
+                    pkt_info['latency'] = diff  # compute time in slots
+                    offset -= 5
+
+                    pkt_info['numCellsUsedTx'] = data[offset - 1]
+                    offset -= 1
+
+                    pkt_info['numCellsUsedRx'] = data[offset - 1]
+                    offset -= 1
+
+                    pkt_info['src_id'] = ''.join(['%02x' % x for x in [data[offset - 1], data[offset - 2]]])  # mote id
+                    src_id = pkt_info['src_id']
+                    offset -= 2
+
+                    num_ticks_on = struct.unpack('<I', ''.join([chr(c) for c in data[offset - 4:offset]]))[0]
+                    offset -= 4
+
+                    num_ticks_in_total = struct.unpack('<I', ''.join([chr(c) for c in data[offset - 4:offset]]))[0]
+                    offset -= 4
+
+                    pkt_info['dutyCycle'] = float(num_ticks_on) / float(num_ticks_in_total)  # duty cycle
+
+                    # self.avg_kpi:
+                    if src_id in self.avg_kpi:
+                        self.avg_kpi[src_id]['counter'].append(pkt_info['counter'])
+                        self.avg_kpi[src_id]['latency'].append(pkt_info['latency'])
+                        self.avg_kpi[src_id]['numCellsUsedTx'].append(pkt_info['numCellsUsedTx'])
+                        self.avg_kpi[src_id]['numCellsUsedRx'].append(pkt_info['numCellsUsedRx'])
+                        self.avg_kpi[src_id]['dutyCycle'].append(pkt_info['dutyCycle'])
+                    else:
+                        self.avg_kpi[src_id] = {
+                            'counter': [pkt_info['counter']],
+                            'latency': [pkt_info['latency']],
+                            'numCellsUsedTx': [pkt_info['numCellsUsedTx']],
+                            'numCellsUsedRx': [pkt_info['numCellsUsedRx']],
+                            'dutyCycle': [pkt_info['dutyCycle']],
+                            'avg_cellsUsage': 0.0,
+                            'avg_latency': 0.0,
+                            'avg_pdr': 0.0,
+                        }
+
+                    if self.mqtt_connected:
+                        self.publish_kpi(src_id)
+
+                    # in case we want to send the computed time to internet..
+                    # computed=struct.pack('<H', timeinus)#to be appended to the pkt
+                    # for x in computed:
+                    # data.append(x)
+                else:
+                    # no udplatency
+                    # print data
+                    pass
+            else:
+                pass
 
         event_type = 'data'
         # notify a tuple including source as one hop away nodes elide SRC address as can be inferred from MAC layer
