@@ -34,7 +34,16 @@ class SensorNetworkPayload(Struct):
         """
         return OrderedDict([
             ("source_address", (StructFieldType.UINT16, 1)),
-            ("counter", (StructFieldType.UINT16, 1)),
+            ("sequence_number", (StructFieldType.UINT8, 1)),
+            ("channel", (StructFieldType.UINT8, 1)),
+            ("reserved1", (StructFieldType.UINT8, 1)),
+            ("reserved2", (StructFieldType.UINT8, 1)),
+            ("output", (StructFieldType.UINT32, 8)),
+            ("coarse", (StructFieldType.UINT8, 1)),
+            ("mid", (StructFieldType.UINT8, 1)),
+            ("fine", (StructFieldType.UINT8, 1)),
+            ("reserved3", (StructFieldType.UINT8, 1)),
+            ("crc", (StructFieldType.UINT16, 1)),
         ])
 
 

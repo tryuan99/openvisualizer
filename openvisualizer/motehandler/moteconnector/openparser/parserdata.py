@@ -104,8 +104,10 @@ class ParserData(parser.Parser):
             packet.get("udp_header").get("source_port") == self.USENSOR_NETWORK_PORT and
             packet.get("udp_header").get("destination_port") == self.USENSOR_NETWORK_PORT):
             address = packet.get("udp_payload").get("source_address")
-            counter = packet.get("udp_payload").get("counter")
-            log.info("received sensor network packet from {0}: counter {1}".format(hex(address), counter))
+            sequence_number = packet.get("udp_payload").get("sequence_number")
+            channel = packet.get("udp_payload").get("channel")
+            output = packet.get("udp_payload").get("output")
+            log.info("received sensor network packet from {0} on channel {1}, sequence number {2}: {3} {4} {5} {6} {7}".format(hex(address), channel, sequence_number, output[0], output[1], output[2], output[3], output[4]))
         else:
             # cross layer trick here. capture UDP packet from udpLatency and get ASN to compute latency.
             offset = 0
